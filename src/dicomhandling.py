@@ -10,7 +10,9 @@ This module implements the classes DcmFilter and DcmRotate, the function
 check_ipp and needed auxiliary functionsto accomplish objectives 1-5 described 
 in the R&D document.
 
-TO COMPLETE
+Besides, the module includes the main() method to provide the residue of a
+voxelwise subtraction operation applied to two input images,
+unfiltered and filtered.
 
 Design decisions: Generally, medical images cannot be understood as simple 
 multidimensional arrays (i.e., tensors). The transformations performed on them
@@ -48,8 +50,10 @@ IPP_TAG = '0020|0032'
 def save_array_as_jpg(image_arr:np.array, path:str):
     """
     Images are stored employing SimpleITK. 
-    Since jpg format requires 8-bit codification per voxel (i.e., 0-255 pixel values)
-    the images are rescaled first to avoid saturation and subsequenly cast to unsigned integer 
+    Since jpg format requires 8-bit codification per voxel
+    (i.e., 0-255 pixel values)
+    the images are rescaled first to avoid saturation and subsequenly
+    cast to unsigned integer 
     """
     path = path if path.endswith('.jpg') else path+'.jpg'
     itk_image = sitk.GetImageFromArray(image_arr)
@@ -76,10 +80,13 @@ def _check_path_file(path:str)->str:
 
 def _get_dcm_itk_img(path:str)->(np.array, dict):
     """
-    Checks if the image path exists and if the provided image accomplishes with the DICOM format.
-    If the image is correct the SimpleITK auxiliary functions transforms the itk image object in the example require numpy array
-    Besides, return all the DICOM metadata. This approach enables future extensions for which meaningful
-    information could be essential (e.g., spacing, origin).   
+    Checks if the image path exists and if the provided image accomplishes
+    with the DICOM format.
+    If the image is correct the SimpleITK auxiliary functions transforms
+    the itk image object in the example require numpy array
+    Besides, return all the DICOM metadata. This approach enables future
+    extensions for which meaningful information could be essential
+    (e.g., spacing, origin).   
     """
     path = _check_path_file(path)
     itk_img = sitk.ReadImage(path)
@@ -103,7 +110,8 @@ class DcmFilter:
 
     Returns
     -------
-        Dcm Filter object with .....
+        Dcm Filter object with original and filted images as Numpy arrays
+        and ipp as three elements list
     """
     def __init__(self, path:str, sigma:float = 3.0):
         self.original = path
@@ -147,7 +155,8 @@ class DcmRotate:
 
     Returns
     -------
-        DcmRotate object with .....
+        DcmRotate object with original and rotated images as Numpy arrays
+        and ipp as three elements list
     """
     def __init__(self, path:str, angle:int = 180):
         self.original = path
@@ -183,5 +192,75 @@ class DcmRotate:
         self._ipp = _get_ipp(dcm_metadata)
         
 
-def check_ipp(dcm_obj1:Union[DcmFilter, DcmRotate], dcm_obj2:Union[DcmFilter, DcmRotate]):
+def check_ipp(dcm_obj1:Union[DcmFilter, DcmRotate], dcm_obj2:Union[DcmFilter, DcmRotate]) -> bool:
+    """
+    check_ipp implementation. 
+    Parameters
+    ----------
+    *dcm_obj : DcmFilter or DcmRotate objects
+    Returns
+    -------
+        Boolean checking the equal position of the patients stored in the filters
+    """
     return dcm_obj1.ipp == dcm_obj2.ipp
+
+
+## Custom exceptions must ot be child classes of the Exception class ##
+## In this case are quite simple. It is enough to customize the message and call the superclass __init__
+class SameImagePositionPatient(Exception):
+    def __init__(self, message = "The DICOM files appear to be the same. Aborting."):
+        self.message = message
+        super().__init__(self.message)
+        
+class IncorrectNumberOfImages(Exception):
+    def __init__(self, message = "Incorrect number of images. Aborting."):
+        self.message = message
+        super().__init__(self.message)
+            
+def check_input_folder(folder_path:str, n_images=2)->list:
+    """
+    The function check if the number of images are correct and 
+    the dicom files similarity
+    """
+    dcm_paths = glob.glob(os.path.join(folder_path,'*.dcm'))
+    #exact numer of images?
+    if len(dcm_paths)!=n_images:
+        raise IncorrectNumberOfImages
+    #if the number of expected images (2) is correct, DcmFilters are created    
+    dcm_filters = [DcmFilter(dcm_path) for dcm_path in dcm_paths]
+    #check ImagePatientPosition
+    if check_ipp(*dcm_filters):
+        raise SameImagePositionPatient
+    return dcm_filters
+
+
+def main(folder_path:str):
+    """
+    main implementation for the voxelwise substraction of two same image before
+    and after be filtered.
+    Parameters
+    ----------
+    folder_path: Path to the folfer with two 2D dicom slices 
+    Returns
+    -------
+        Creates two resultant images within a folder named "residues" included
+        in the input folder. The images are stored as "unfiltered_residue.jpg"
+        and "filtered_residue.jpg" corresponding with the voxelwise subtraction
+        of the two images within the input folder before and after being filtered.   
+    """
+    dcm_filters = check_input_folder(folder_path)
+    # If no exceptions are raised is possible to calculate the residues
+    # and save the results
+    original_res = dcm_filters[0].original - dcm_filters[1].original
+    filtered_res = dcm_filters[0].filtered - dcm_filters[1].filtered
+    
+    # Save (or create) folder for residues
+    save_path = os.path.join(folder_path, 'residues')
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+    save_array_as_jpg(original_res, os.path.join(save_path, "unfiltered_residue"))
+    save_array_as_jpg(filtered_res, os.path.join(save_path, "filtered_residue"))
+    
+        
+if __name__ == '__main__':
+     main(sys.argv[1])
